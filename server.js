@@ -61,9 +61,6 @@ async function generateRSSFromConfluence(slug) {
       pubDate,
     });
 
-    // Ajout d'un <link rel="stylesheet"> pour la feuille de style Atlassian
-    const AUI_CSS_LINK = `<link rel="stylesheet" href="https://unpkg.com/@atlaskit/css-reset@latest/dist/bundle.css">`;
-
     $("span.aui-lozenge-success").each((_, el) => {
       const span = $(el);
       const statusText = span.text().trim();
@@ -87,7 +84,7 @@ async function generateRSSFromConfluence(slug) {
 
           feed.item({
             title: cleanedTitle,
-            description: `<![CDATA[${AUI_CSS_LINK}${$.html(cleanedElement)}]]>`,
+            description: $.html(cleanedElement),
             url,
             date: pubDate,
           });
