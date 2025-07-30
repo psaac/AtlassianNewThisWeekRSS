@@ -7,6 +7,14 @@ const dayjs = require("dayjs");
 const app = express();
 const PORT = 3000;
 
+// Cache handling
+const cache = {};
+const CACHE_DURATION_MS = 60 * 60 * 1000; // 60 minutes
+
+function getCacheKey(slug, filter) {
+  return `${slug}_${filter}`;
+}
+
 // 🔧 Génère le slug automatique de la semaine actuelle (ex: jul-21-to-jul-28-2025)
 function getCurrentWeekSlug() {
   const today = dayjs();
@@ -85,7 +93,16 @@ function capitalizeWords(str) {
 }
 
 // 🧠 Fonction principale de scraping RSS
-async function generateRSSFromConfluence(slug, tag) {
+async function generateRSSFromConfluence(slug, filter) {
+  const key = getCacheKey(slug, filter);
+  const now = Date.now();
+
+  // Serve from cache if valid
+  if (cache[key] && now - cache[key].timestamp < CACHE_DURATION_MS) {
+    console.log(`Serving from cache: ${key}`);
+    return cache[key].xml;
+  }
+
   const url = `https://confluence.atlassian.com/cloud/blog/${getYearFromSlug(
     slug
   )}/${getMonthFromSlug(slug)}/atlassian-cloud-changes-${slug}`;
@@ -100,7 +117,7 @@ async function generateRSSFromConfluence(slug, tag) {
       const span = $(el);
       const statusText = span.text().trim();
 
-      if (statusText === tag) {
+      if (statusText === filter) {
         const parent = span.closest("li, p, table, div");
 
         if (parent.length) {
@@ -129,10 +146,10 @@ async function generateRSSFromConfluence(slug, tag) {
     });
 
     const feed = new RSS({
-      title: `Atlassian Cloud - ${capitalizeWords(tag.toLowerCase())} (${
+      title: `Atlassian Cloud - ${capitalizeWords(filter.toLowerCase())} (${
         items.length
       } items)`,
-      description: `Weekly updates from Atlassian marked as "${tag}" - Week of ${slug}`,
+      description: `Weekly updates from Atlassian marked as "${filter}" - Week of ${slug}`,
       feed_url: `https://yourdomain.com/rss.xml`,
       site_url: url,
       language: "en",
@@ -140,7 +157,15 @@ async function generateRSSFromConfluence(slug, tag) {
     });
     items.forEach((item) => feed.item(item));
 
-    return feed.xml({ indent: true });
+    const xml = feed.xml({ indent: true });
+
+    // Update cache
+    cache[key] = {
+      xml,
+      timestamp: now,
+    };
+
+    return xml;
   } catch (error) {
     console.error("Error fetching or parsing page:", error);
     return null;
@@ -150,8 +175,8 @@ async function generateRSSFromConfluence(slug, tag) {
 // 🌐 Route : RSS de la semaine en cours
 app.get("/rss", async (req, res) => {
   const slug = getCurrentWeekSlug();
-  const tag = req.query.tag || "NEW THIS WEEK";
-  const xml = await generateRSSFromConfluence(slug, tag);
+  const filter = req.query.filter || "NEW THIS WEEK";
+  const xml = await generateRSSFromConfluence(slug, filter);
   if (xml) {
     res.set("Content-Type", "application/rss+xml");
     res.send(xml);
@@ -163,8 +188,8 @@ app.get("/rss", async (req, res) => {
 // 🌐 Route : RSS of previous week
 app.get("/rss/previous", async (req, res) => {
   const slug = getPreviousWeekSlug();
-  const tag = req.query.tag || "NEW THIS WEEK";
-  const xml = await generateRSSFromConfluence(slug, tag);
+  const filter = req.query.filter || "NEW THIS WEEK";
+  const xml = await generateRSSFromConfluence(slug, filter);
   if (xml) {
     res.set("Content-Type", "application/rss+xml");
     res.send(xml);
@@ -176,8 +201,8 @@ app.get("/rss/previous", async (req, res) => {
 // 🌐 Route : RSS d'une semaine spécifique
 app.get("/rss/:slug", async (req, res) => {
   const slug = req.params.slug;
-  const tag = req.query.tag || "NEW THIS WEEK";
-  const xml = await generateRSSFromConfluence(slug, tag);
+  const filter = req.query.filter || "NEW THIS WEEK";
+  const xml = await generateRSSFromConfluence(slug, filter);
   if (xml) {
     res.set("Content-Type", "application/rss+xml");
     res.send(xml);
