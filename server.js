@@ -1,8 +1,15 @@
-const express = require("express");
-const axios = require("axios");
-const cheerio = require("cheerio");
-const RSS = require("rss");
-const dayjs = require("dayjs");
+import express from "express";
+import * as cheerio from "cheerio";
+import RSS from "rss";
+import {
+  getCurrentWeekSlug,
+  getPreviousWeekSlug,
+  getDateFromSlug,
+  getYearFromSlug,
+  getMonthFromSlug,
+} from "./atlassianSlug.js";
+import { capitalizeWords, fetchHtml } from "./utils.js"; // Assuming you have a utility function for capitalization
+// import { JSDOM } from "jsdom";
 
 const app = express();
 const PORT = 3000;
@@ -15,162 +22,182 @@ function getCacheKey(slug, filter) {
   return `${slug}_${filter}`;
 }
 
-// 🔧 Génère le slug automatique de la semaine actuelle (ex: jul-21-to-jul-28-2025)
-function getCurrentWeekSlug() {
-  const today = dayjs();
-  const lastMonday = today.startOf("week").subtract(6, "day"); // Lundi de la semaine dernière
-  const lastSunday = lastMonday.add(7, "day");
-
-  return `${lastMonday.format("MMM-D").toLowerCase()}-to-${lastSunday
-    .format("MMM-D-YYYY")
-    .toLowerCase()}`;
+function getWikiUrl(slug) {
+  return `https://confluence.atlassian.com/cloud/blog/${getYearFromSlug(
+    slug
+  )}/${getMonthFromSlug(slug)}/atlassian-cloud-changes-${slug}`;
 }
 
-function getPreviousWeekSlug() {
-  const today = dayjs();
-  const lastMonday = today.startOf("week").subtract(13, "day"); // Lundi de la semaine précédente
-  const lastSunday = lastMonday.add(7, "day");
+function parseFilteredItems(slug, html, filter) {
+  const key = getCacheKey(slug, filter);
+  const now = Date.now();
+  const pubDate = getDateFromSlug(slug);
+  const url = getWikiUrl(slug);
+  const $ = cheerio.load(html);
 
-  return `${lastMonday.format("MMM-D").toLowerCase()}-to-${lastSunday
-    .format("MMM-D-YYYY")
-    .toLowerCase()}`;
+  const items = [];
+  $("span.aui-lozenge").each((_, el) => {
+    const span = $(el);
+    const statusText = span.text().trim();
+
+    if (statusText === filter) {
+      const parent = span.closest("li, p, table, div");
+
+      if (parent.length) {
+        const cleanedElement = parent.clone();
+        cleanedElement.find("span.status-macro").remove();
+        cleanedElement.find("h4").remove(); // Remove any h4 tags if they exist
+
+        items.push({
+          title: parent.find("h4").text().trim(),
+          description: $.html(cleanedElement),
+          url: url,
+          date: pubDate,
+        });
+      }
+    }
+  });
+
+  // Update cache
+  cache[key] = {
+    items,
+    timestamp: now,
+  };
+
+  return items;
 }
 
-function getDateFromSlug(slug) {
-  const match = slug.match(
-    /([a-z]{3})-(\d{1,2})-to-([a-z]{3})-(\d{1,2})-(\d{4})/i
-  );
-  if (!match) return new Date(); // fallback
+function generateFeed(items, filter, slug) {
+  const feed = new RSS({
+    title: `Atlassian Cloud - ${capitalizeWords(filter.toLowerCase())} (${
+      items.length
+    } items)`,
+    description: `Weekly updates from Atlassian marked as "${filter}" - Week of ${slug}`,
+    feed_url: `https://yourdomain.com/rss.xml`,
+    site_url: getWikiUrl(slug),
+    language: "en",
+    pubDate: getDateFromSlug(slug),
+  });
+  items.forEach((item) => feed.item(item));
 
-  const [, , , monthStr, dayStr, yearStr] = match;
-  const month = {
-    jan: 0,
-    feb: 1,
-    mar: 2,
-    apr: 3,
-    may: 4,
-    jun: 5,
-    jul: 6,
-    aug: 7,
-    sep: 8,
-    oct: 9,
-    nov: 10,
-    dec: 11,
-  }[monthStr.toLowerCase()];
-
-  return new Date(parseInt(yearStr), month, parseInt(dayStr));
-}
-
-function getYearFromSlug(slug) {
-  const match = slug.match(/-(\d{4})$/);
-  if (!match) return new Date().getFullYear(); // fallback
-
-  return parseInt(match[1]);
-}
-
-function getMonthFromSlug(slug) {
-  const match = slug.match(/-to-([a-z]{3})-/i);
-  if (!match) return new Date().getMonth(); // fallback
-  const monthStr = match[1].toLowerCase();
-  return {
-    jan: "01",
-    feb: "02",
-    mar: "03",
-    apr: "04",
-    may: "05",
-    jun: "06",
-    jul: "07",
-    aug: "08",
-    sep: "09",
-    oct: "10",
-    nov: "11",
-    dec: "12",
-  }[monthStr];
-}
-
-function capitalizeWords(str) {
-  return str.replace(/\b\w/g, (char) => char.toUpperCase());
+  return feed.xml({ indent: true });
 }
 
 // 🧠 Fonction principale de scraping RSS
 async function generateRSSFromConfluence(slug, filter) {
   const key = getCacheKey(slug, filter);
   const now = Date.now();
+  let items = [];
 
   // Serve from cache if valid
   if (cache[key] && now - cache[key].timestamp < CACHE_DURATION_MS) {
     console.log(`Serving from cache: ${key}`);
-    return cache[key].xml;
+    items = cache[key].items;
+  } else {
+    const html = await fetchHtml(getWikiUrl(slug));
+    items = parseFilteredItems(slug, html, filter);
   }
-
-  const url = `https://confluence.atlassian.com/cloud/blog/${getYearFromSlug(
-    slug
-  )}/${getMonthFromSlug(slug)}/atlassian-cloud-changes-${slug}`;
-  const pubDate = getDateFromSlug(slug);
-
-  try {
-    const response = await axios.get(url);
-    const $ = cheerio.load(response.data);
-
-    const items = [];
-    $("span.aui-lozenge").each((_, el) => {
-      const span = $(el);
-      const statusText = span.text().trim();
-
-      if (statusText === filter) {
-        const parent = span.closest("li, p, table, div");
-
-        if (parent.length) {
-          // Nettoyer le texte du parent pour le titre
-          const rawText = parent.text().trim();
-          const cleanedTitle =
-            rawText
-              .replace(/NEW THIS WEEK/i, "")
-              .replace(/ROLLING OUT/i, "")
-              .replace(/COMING SOON/i, "")
-              .replace(/\s+/g, " ")
-              .trim()
-              .slice(0, 80) + "...";
-
-          const cleanedElement = parent.clone();
-          cleanedElement.find("span.status-macro").remove();
-
-          items.push({
-            title: cleanedTitle,
-            description: $.html(cleanedElement),
-            url,
-            date: pubDate,
-          });
-        }
-      }
-    });
-
-    const feed = new RSS({
-      title: `Atlassian Cloud - ${capitalizeWords(filter.toLowerCase())} (${
-        items.length
-      } items)`,
-      description: `Weekly updates from Atlassian marked as "${filter}" - Week of ${slug}`,
-      feed_url: `https://yourdomain.com/rss.xml`,
-      site_url: url,
-      language: "en",
-      pubDate,
-    });
-    items.forEach((item) => feed.item(item));
-
-    const xml = feed.xml({ indent: true });
-
-    // Update cache
-    cache[key] = {
-      xml,
-      timestamp: now,
-    };
-
-    return xml;
-  } catch (error) {
-    console.error("Error fetching or parsing page:", error);
-    return null;
-  }
+  return generateFeed(items, filter, slug);
 }
+
+// 🌐 Routes
+// 🌐 Route : Home
+// --- Route HTML avec filtre en dropdown ---
+app.get("/:slug", async (req, res) => {
+  try {
+    const filter = req.query.filter || "NEW THIS WEEK";
+    const slug = req.params.slug || getCurrentWeekSlug();
+    // Cache handling
+    const key = getCacheKey(slug, filter);
+    const now = Date.now();
+    const url = getWikiUrl(slug);
+    let items = [];
+    if (cache[key] && now - cache[key].timestamp < CACHE_DURATION_MS) {
+      console.log(`Serving from cache: ${key}`);
+      items = cache[key].items;
+    } else {
+      const html = await fetchHtml(url);
+      items = parseFilteredItems(slug, html, filter);
+    }
+
+    // Affiche une page avec dropdown pour changer le filtre en JS
+    res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Atlassian Cloud - ${filter}</title>
+<style>
+  body { font-family: Arial, sans-serif; padding: 2rem; background-color: #121212; color: white; }
+  .rss-item { margin-bottom: 1rem; padding: 1rem; border-left: 4px solid #0052CC; background: hsl(30, 20%, 10%);}
+  .rss-item h3 { margin: 0; }
+  .rss-button {
+    background-color: #ff6600;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    cursor: pointer;
+    border-radius: 5px;
+    font-weight: bold;
+  }
+  .rss-button:hover {
+    background-color: #e65c00;
+  }
+</style>
+</head>
+<body>
+<h2><a href="${url}">Atlassian Cloud - ${filter} - ${slug} (${
+      items.length
+    } items)</a>
+
+<a href="/rss${req.params.slug ? `/${req.params.slug}` : ""}${
+      filter ? `?filter=${encodeURIComponent(filter)}` : ""
+    }" target="_blank" rel="noopener noreferrer">
+  <button class="rss-button">RSS</button>
+</a>
+</h2>
+
+<label for="filter-select">Filter: </label>
+<select id="filter-select">
+  <option value="NEW THIS WEEK" ${
+    filter === "NEW THIS WEEK" ? "selected" : ""
+  }>NEW THIS WEEK</option>
+  <option value="COMING SOON" ${
+    filter === "COMING SOON" ? "selected" : ""
+  }>COMING SOON</option>
+  <option value="ROLLING OUT" ${
+    filter === "ROLLING OUT" ? "selected" : ""
+  }>ROLLING OUT</option>
+</select>
+
+<div id="items">
+  ${items
+    .map(
+      (item) => `
+    <div class="rss-item">
+      <h2>${item.title}</h2>
+      <p>${item.description}</p>
+    </div>`
+    )
+    .join("")}
+</div>
+
+<script>
+  document.getElementById("filter-select").addEventListener("change", e => {
+    const selectedFilter = e.target.value;
+    // Recharge la page avec le filtre choisi (tu peux améliorer en fetch API)
+    const params = new URLSearchParams(window.location.search);
+    params.set("filter", selectedFilter);
+    window.location.search = params.toString();
+  });
+</script>
+</body>
+</html>
+    `);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
 
 // 🌐 Route : RSS de la semaine en cours
 app.get("/rss", async (req, res) => {
