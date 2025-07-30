@@ -1,0 +1,19 @@
+{
+  "name": "atlassiannewthisweek",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.11.0",
+    "cheerio": "^1.1.2",
+    "dayjs": "^1.11.13",
+    "express": "^5.1.0",
+    "rss": "^1.2.2"
+  }
+}
