@@ -100,10 +100,7 @@ async function generateRSSFromConfluence(slug, filter) {
   return generateFeed(items, filter, slug);
 }
 
-// 🌐 Routes
-// 🌐 Route : Home
-// --- Route HTML avec filtre en dropdown ---
-app.get("/:slug", async (req, res) => {
+async function home(req, res) {
   try {
     const filter = req.query.filter || "NEW THIS WEEK";
     const slug = req.params.slug || getCurrentWeekSlug();
@@ -197,6 +194,18 @@ app.get("/:slug", async (req, res) => {
   } catch (err) {
     res.status(500).send(err.message);
   }
+}
+
+// 🌐 Routes
+// 🌐 Route : Home
+app.get("/", async (req, res) => {
+  req.params.slug = getCurrentWeekSlug();
+  req.query.filter = "NEW THIS WEEK";
+  home(req, res);
+});
+
+app.get("/:slug", async (req, res) => {
+  home(req, res);
 });
 
 // 🌐 Route : RSS de la semaine en cours
