@@ -204,10 +204,6 @@ app.get("/", async (req, res) => {
   home(req, res);
 });
 
-app.get("/:slug", async (req, res) => {
-  home(req, res);
-});
-
 // 🌐 Route : RSS de la semaine en cours
 app.get("/rss", async (req, res) => {
   const slug = getCurrentWeekSlug();
@@ -219,6 +215,10 @@ app.get("/rss", async (req, res) => {
   } else {
     res.status(500).send("Failed to generate RSS");
   }
+});
+
+app.get("/:slug", async (req, res) => {
+  home(req, res);
 });
 
 // 🌐 Route : RSS of previous week
